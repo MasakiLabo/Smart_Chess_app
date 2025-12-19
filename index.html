@@ -1,0 +1,1017 @@
+ <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React, ReactDOM, Babel CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- chess.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+
+  <style>
+    /* ツールチップのスタイル調整 */
+    .tooltip-container {
+      pointer-events: none;
+      z-index: 50;
+    }
+    body {
+      font-family: sans-serif;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Reactのマウントポイント -->
+<div id="root"></div>
+
+<script type="text/babel">
+  const { useState, useEffect, useCallback, useRef, useMemo } = React;
+
+  // Lucideアイコンラッパー
+  const IconWrapper = ({ name, size, ...props }) => {
+    const iconRef = useRef(null);
+
+    useEffect(() => {
+      if (!iconRef.current || !window.lucide || !window.lucide.icons) return;
+
+      const iconDef = window.lucide.icons[name];
+      if (!iconDef) {
+        return;
+      }
+
+      let attrs = {};
+      let children = [];
+
+      if (Array.isArray(iconDef)) {
+        const potentialAttrs = iconDef[1];
+        const potentialChildren = iconDef[2];
+
+        if (Array.isArray(potentialAttrs)) {
+          children = potentialAttrs;
+          attrs = {};
+        } else if (potentialAttrs && typeof potentialAttrs === 'object') {
+          attrs = potentialAttrs;
+          children = Array.isArray(potentialChildren) ? potentialChildren : [];
+        }
+      } else {
+        attrs = iconDef.attrs || {};
+        children = iconDef.children || [];
+      }
+
+      iconRef.current.innerHTML = '';
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      
+      if (attrs && !Array.isArray(attrs)) {
+        for (const [key, value] of Object.entries(attrs)) {
+           svg.setAttribute(key, value);
+        }
+      }
+      
+      const combinedProps = { ...props };
+      if (size) {
+        combinedProps.width = size;
+        combinedProps.height = size;
+      }
+
+      for (const [key, value] of Object.entries(combinedProps)) {
+          if (key === 'children') continue;
+          if (key === 'className') {
+              svg.setAttribute('class', value);
+          } else if (key === 'strokeWidth') {
+              svg.setAttribute('stroke-width', value);
+          } else {
+              const attrName = key.replace(/[A-Z]/g, m => "-" + m.toLowerCase());
+              if (!/^[0-9]/.test(attrName)) {
+                 svg.setAttribute(attrName, value);
+              }
+          }
+      }
+
+      if (Array.isArray(children)) {
+        children.forEach(child => {
+            if (!Array.isArray(child)) return;
+            const tagName = child[0];
+            const childAttrs = child[1];
+            const el = document.createElementNS('http://www.w3.org/2000/svg', tagName);
+            if (childAttrs && typeof childAttrs === 'object' && !Array.isArray(childAttrs)) {
+                for(const [key, value] of Object.entries(childAttrs)) {
+                    el.setAttribute(key, value);
+                }
+            }
+            svg.appendChild(el);
+        });
+      }
+      iconRef.current.appendChild(svg);
+    }, [name, size, props]);
+
+    return <i ref={iconRef} className="flex items-center justify-center" />;
+  };
+
+  const Copy = (props) => <IconWrapper name="Copy" {...props} />;
+  const RefreshCw = (props) => <IconWrapper name="RefreshCw" {...props} />;
+  const Brain = (props) => <IconWrapper name="Brain" {...props} />;
+  const Trophy = (props) => <IconWrapper name="Trophy" {...props} />;
+  const RotateCcw = (props) => <IconWrapper name="RotateCcw" {...props} />;
+  const Languages = (props) => <IconWrapper name="Languages" {...props} />;
+  const User = (props) => <IconWrapper name="User" {...props} />;
+  const Bot = (props) => <IconWrapper name="Bot" {...props} />;
+  const Cpu = (props) => <IconWrapper name="Cpu" {...props} />;
+  const Sparkles = (props) => <IconWrapper name="Sparkles" {...props} />;
+  const Gauge = (props) => <IconWrapper name="Gauge" {...props} />;
+  const Info = (props) => <IconWrapper name="Info" {...props} />;
+  const ChevronDown = (props) => <IconWrapper name="ChevronDown" {...props} />;
+  const ChevronUp = (props) => <IconWrapper name="ChevronUp" {...props} />;
+  const ArrowDownToLine = (props) => <IconWrapper name="ArrowDownToLine" {...props} />;
+
+
+  // -----------------------------------------------------------------------------
+  // Constants & Translations
+  // -----------------------------------------------------------------------------
+  const PLAYER_TYPES = {
+    HUMAN: 'human',
+    CPU: 'cpu',
+    EXTERNAL_AI: 'external_ai'
+  };
+
+  // 翻訳データ：句読点（、。）を削除しスペースや改行で調整
+  const TRANSLATIONS = {
+    ja: {
+      title: "スマートチェス",
+      statusLoading: "読み込み中",
+      statusThinking: "思考中",
+      statusTurn: (color, playerType) => `${color === 'w' ? '白' : '黒'} (${playerType}) の番です`,
+      statusCheck: (color) => `${color === 'w' ? '白' : '黒'} がチェックされています`,
+      statusCheckmate: (winnerColor) => `チェックメイト ${winnerColor === 'w' ? '白' : '黒'} の勝ち`,
+      statusDraw: "引き分け",
+      level: (lv) => `Lv. ${lv}`,
+      cpuLevelLabel: "CPUの強さ",
+      aiTitle: "生成AIに手を聞く",
+      aiDesc: "1 下のボタンでプロンプトをコピーしAIに貼り付け\n2 AIの回答を下の入力欄に貼り付け",
+      aiBtn: "質問文をコピー",
+      aiInputPlaceholder: "AIの回答をここに貼り付け 例 Move Nf3 g1 to f3",
+      aiApplyBtn: "AIの手を反映",
+      aiMoveError: "有効な手が見つかりませんでした AIの回答に手が含まれているか確認してください",
+      aiAlert: "プロンプトをコピーしました\nお好みのAI Gemini ChatGPT Claudeなど に貼り付けて 返答された手を盤面で動かしてください",
+      instructionsTitle: "使い方",
+      reset: "リセット",
+      resetConfirm: "ゲームをリセットして最初からやり直しますか",
+      cancel: "キャンセル",
+      ok: "OK",
+      white: "白 (先手)",
+      black: "黒 (後手)",
+      playerTypes: {
+        [PLAYER_TYPES.HUMAN]: "人間",
+        [PLAYER_TYPES.CPU]: "ローカルCPU",
+        [PLAYER_TYPES.EXTERNAL_AI]: "外部AI (LLM)"
+      },
+      pieces: {
+        p: { name: "ポーン (歩兵)", move: "前に1歩進めます 最初の位置からは2歩も可 斜め前の敵を攻撃できます" },
+        n: { name: "ナイト (騎士)", move: "L字型に動きます 縦2横1 または横2縦1 他のコマを飛び越えられます" },
+        b: { name: "ビショップ (僧侶)", move: "斜め方向にどこまででも動けます" },
+        r: { name: "ルーク (城)", move: "縦か横にどこまででも動けます" },
+        q: { name: "クイーン (女王)", move: "縦 横 斜めのすべての方向にどこまででも動けます 最強のコマです" },
+        k: { name: "キング (王様)", move: "縦 横 斜めのすべての方向に1歩だけ動けます 取られると負けです" },
+      },
+      promptTemplate: (fen, color) => 
+        `あなたはチェスのグランドマスターAIです\n` +
+        `現在 あなたは ${color === 'w' ? '白 先手' : '黒 後手'} でプレイしています\n` +
+        `現在の盤面 FEN形式 ${fen}\n\n` +
+        `この状況での最善の一手を教えてください\n` +
+        `回答の最後に必ず以下の形式で移動を記述してください\n` +
+        `Move: [SAN記号] ([移動元のマス] to [移動先のマス])\n` +
+        `例 Move: Nf3 (g1 to f3)`
+    },
+    en: {
+      title: "Smart Chess",
+      statusLoading: "Loading...",
+      statusThinking: "Thinking...",
+      statusTurn: (color, playerType) => `${color === 'w' ? 'White' : 'Black'} (${playerType}) Turn`,
+      statusCheck: (color) => `${color === 'w' ? 'White is' : 'Black is'} in check`,
+      statusCheckmate: (winnerColor) => `Checkmate! ${winnerColor === 'w' ? 'White' : 'Black'} wins!`,
+      statusDraw: "Draw!",
+      level: (lv) => `Lv. ${lv}`,
+      cpuLevelLabel: "CPU Level",
+      aiTitle: "Ask Generative AI",
+      aiDesc: "1. Copy prompt and paste to AI.\n2. Paste AI's reply below to apply move.",
+      aiBtn: "Copy Prompt",
+      aiInputPlaceholder: "Paste AI response here (e.g., Move: Nf3 g1 to f3)",
+      aiApplyBtn: "Apply AI Move",
+      aiMoveError: "No valid move found. Please check if the AI response contains a valid move.",
+      aiAlert: "Prompt copied!\nPaste it into your favorite AI tool and make the move on the board.",
+      instructionsTitle: "Instructions",
+      reset: "Reset",
+      resetConfirm: "Are you sure you want to reset the game?",
+      cancel: "Cancel",
+      ok: "OK",
+      white: "White",
+      black: "Black",
+      playerTypes: {
+        [PLAYER_TYPES.HUMAN]: "Human",
+        [PLAYER_TYPES.CPU]: "Local CPU",
+        [PLAYER_TYPES.EXTERNAL_AI]: "External AI (LLM)"
+      },
+      pieces: {
+        p: { name: "Pawn", move: "Moves forward 1 square. Captures diagonally." },
+        n: { name: "Knight", move: "Moves in an 'L-shape'. Jumps over pieces." },
+        b: { name: "Bishop", move: "Moves diagonally." },
+        r: { name: "Rook", move: "Moves horizontally or vertically." },
+        q: { name: "Queen", move: "Moves in any direction." },
+        k: { name: "King", move: "Moves 1 square in any direction." },
+      },
+      promptTemplate: (fen, color) => 
+        `You are a Chess Grandmaster AI.\n` +
+        `You are playing as "${color === 'w' ? 'White' : 'Black'}".\n` +
+        `Current Board (FEN): ${fen}\n\n` +
+        `What is the best move?\n` +
+        `At the end of your response, state your move in this EXACT format:\n` +
+        `Move: [SAN notation] ([from square] to [to square])\n` +
+        `Example: Move: Nf3 (g1 to f3)`
+    }
+  };
+
+
+  // -----------------------------------------------------------------------------
+  // SVG Chess Pieces
+  // -----------------------------------------------------------------------------
+  const PIECE_SVGS = {
+    w: {
+      p: <svg viewBox="0 0 45 45"><path d="M22.5 9c-2.21 0-4 1.79-4 4 0 .89.29 1.71.78 2.38C17.33 16.5 16 18.59 16 21c0 2.03.94 3.84 2.41 5.03-3 1.06-7.41 5.55-7.41 13.47h23c0-7.92-4.41-12.41-7.41-13.47 1.47-1.19 2.41-3 2.41-5.03 0-2.41-1.33-4.5-3.28-5.62.49-.67.78-1.49.78-2.38 0-2.21-1.79-4-4-4z" stroke="#000" strokeWidth="1.5" fill="#fff"/></svg>,
+      n: <svg viewBox="0 0 45 45"><path d="M22 10c10.5 1 16.5 8 16 29H15c0-9 10-6.5 8-21" stroke="#000" strokeWidth="1.5" fill="#fff"/><path d="M24 18c.38 2.32-2.58 2.9-3 3-3.65.65-5.02-2.35-4.4-4.28C17.35 14.36 21.08 12.3 22 10zM17.5 18a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM9.5 25.5A.5.5 0 1 1 8.5 25.5 .5.5 0 0 1 9.5 25.5zM15 15.5c-1.88 0-4.38 1.12-6 3.5-1.47 2.16-1.59 4.88-.47 6.66l1.25-1.59c-.44-.94-.03-2.19.78-2.59 1.25-.63 2.66.19 3 1.25 1.25 4 4.59 7.66 4.41 11.28H15v-6z" stroke="#000" strokeWidth="1.5" fill="#fff"/></svg>,
+      b: <svg viewBox="0 0 45 45"><g fill="#fff" stroke="#000" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 36c3.39-.97 9.11-1.45 13.5-1.45 4.39 0 10.11.48 13.5 1.45V30h-27v6zm3.37-7.69c3.15.56 12.36.72 16.59.08 3.86-.58 6.57-2.67 7.72-4.89l-2.03-3.48c-1.68 1.28-4.22 1.69-5.94.95l-5.69-5.92c-1.35.53-2.54 1.35-3.52 2.37l-3.52-2.37c-.98-1.02-2.17-1.84-3.52-2.37L9.29 20.07c-1.72.74-4.26.33-5.94-.95L1.32 22.6c1.15 2.22 3.86 4.31 7.72 4.89l3.33.82zM15.5 13.5l7-9 7 9"/></g></svg>,
+      r: <svg viewBox="0 0 45 45"><g fill="#fff" stroke="#000" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 39h27v-3H9v3zM12 36v-4h21v4H12zM11 14V9h4v2h5V9h4v5"/><path d="M34 14l-3 3H14l-3-3"/><path d="M31 17v12.5c0 2.21-2.24 4.5-5 4.5h-7c-2.76 0-5-2.29-5-4.5V17"/><path d="M31 17l-1.5 2.5h-14L14 17"/><path d="M12.5 32h20"/><path d="M11 14h23"/></g></svg>,
+      q: <svg viewBox="0 0 45 45"><g fill="#fff" stroke="#000" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM24.5 7.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM41 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM10.5 20a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM38.5 20a2 2 0 1 1-4 0 2 2 0 0 1 4 0z"/><path d="M9 26c8.5-1.5 21-1.5 27 0l2-12-7 11V11l-5.5 13.5-3-15-3 15-5.5-13.5V25l-7-11zM11 30c3.5-1 18.5-1 22 0M11 34c3.5-1 18.5-1 22 0M11 38c3.5-1 18.5-1 22 0M9 39h27v-3H9v3z"/></g></svg>,
+      k: <svg viewBox="0 0 45 45"><g fill="#fff" stroke="#000" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22.5 11.63V6M20 8h5"/><path d="M22.5 25s4.5-7.5 3-10.5c0 0-1-2.5-3-2.5s-3 2.5-3 2.5c-1.5 3 3 10.5 3 10.5"/><path d="M11.5 37c5.5 3.5 15.5 3.5 21 0v-7s9-4.5 6-10.5c-4-1-5 2-8 2s-4-4-8.5-4-5.5 4-8.5 4-4-3-8-2c-3 6 6 10.5 6 10.5v7zM11.5 30c5.5-3 15.5-3 21 0M11.5 33.5c5.5-3 15.5-3 21 0M11.5 37c5.5-3 15.5-3 21 0"/></g></svg>
+    },
+    b: {
+      p: <svg viewBox="0 0 45 45"><path d="M22.5 9c-2.21 0-4 1.79-4 4 0 .89.29 1.71.78 2.38C17.33 16.5 16 18.59 16 21c0 2.03.94 3.84 2.41 5.03-3 1.06-7.41 5.55-7.41 13.47h23c0-7.92-4.41-12.41-7.41-13.47 1.47-1.19 2.41-3 2.41-5.03 0-2.41-1.33-4.5-3.28-5.62.49-.67.78-1.49.78-2.38 0-2.21-1.79-4-4-4z" stroke="#000" strokeWidth="1.5" fill="#111"/></svg>,
+      n: <svg viewBox="0 0 45 45"><path d="M22 10c10.5 1 16.5 8 16 29H15c0-9 10-6.5 8-21" stroke="#000" strokeWidth="1.5" fill="#111"/><path d="M24 18c.38 2.32-2.58 2.9-3 3-3.65.65-5.02-2.35-4.4-4.28C17.35 14.36 21.08 12.3 22 10zM17.5 18a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM9.5 25.5A.5.5 0 1 1 8.5 25.5 .5.5 0 0 1 9.5 25.5zM15 15.5c-1.88 0-4.38 1.12-6 3.5-1.47 2.16-1.59 4.88-.47 6.66l1.25-1.59c-.44-.94-.03-2.19.78-2.59 1.25-.63 2.66.19 3 1.25 1.25 4 4.59 7.66 4.41 11.28H15v-6z" stroke="none" fill="#111"/><path d="M15 15.5c-1.88 0-4.38 1.12-6 3.5-1.47 2.16-1.59 4.88-.47 6.66l1.25-1.59c-.44-.94-.03-2.19.78-2.59 1.25-.63 2.66.19 3 1.25 1.25 4 4.59 7.66 4.41 11.28H15v-6z" stroke="#000" strokeWidth="1.5" fill="none"/></svg>,
+      b: <svg viewBox="0 0 45 45"><g fill="#111" stroke="#000" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 36c3.39-.97 9.11-1.45 13.5-1.45 4.39 0 10.11.48 13.5 1.45V30h-27v6zm3.37-7.69c3.15.56 12.36.72 16.59.08 3.86-.58 6.57-2.67 7.72-4.89l-2.03-3.48c-1.68 1.28-4.22 1.69-5.94.95l-5.69-5.92c-1.35.53-2.54 1.35-3.52 2.37l-3.52-2.37c-.98-1.02-2.17-1.84-3.52-2.37L9.29 20.07c-1.72.74-4.26.33-5.94-.95L1.32 22.6c1.15 2.22 3.86 4.31 7.72 4.89l3.33.82zM15.5 13.5l7-9 7 9"/></g></svg>,
+      r: <svg viewBox="0 0 45 45"><g fill="#111" stroke="#000" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 39h27v-3H9v3zM12 36v-4h21v4H12zM11 14V9h4v2h5V9h4v5"/><path d="M34 14l-3 3H14l-3-3"/><path d="M31 17v12.5c0 2.21-2.24 4.5-5 4.5h-7c-2.76 0-5-2.29-5-4.5V17"/><path d="M31 17l-1.5 2.5h-14L14 17"/><path d="M12.5 32h20"/><path d="M11 14h23"/></g></svg>,
+      q: <svg viewBox="0 0 45 45"><g fill="#111" stroke="#000" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM24.5 7.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM41 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM10.5 20a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM38.5 20a2 2 0 1 1-4 0 2 2 0 0 1 4 0z"/><path d="M9 26c8.5-1.5 21-1.5 27 0l2-12-7 11V11l-5.5 13.5-3-15-3 15-5.5-13.5V25l-7-11zM11 30c3.5-1 18.5-1 22 0M11 34c3.5-1 18.5-1 22 0M11 38c3.5-1 18.5-1 22 0M9 39h27v-3H9v3z"/></g></svg>,
+      k: <svg viewBox="0 0 45 45"><g fill="#111" stroke="#000" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22.5 11.63V6M20 8h5"/><path d="M22.5 25s4.5-7.5 3-10.5c0 0-1-2.5-3-2.5s-3 2.5-3 2.5c-1.5 3 3 10.5 3 10.5"/><path d="M11.5 37c5.5 3.5 15.5 3.5 21 0v-7s9-4.5 6-10.5c-4-1-5 2-8 2s-4-4-8.5-4-5.5 4-8.5 4-4-3-8-2c-3 6 6 10.5 6 10.5v7zM11.5 30c5.5-3 15.5-3 21 0M11.5 33.5c5.5-3 15.5-3 21 0M11.5 37c5.5-3 15.5-3 21 0"/></g></svg>
+    }
+  };
+
+  // -----------------------------------------------------------------------------
+  // Helper: Simple Chess AI (Minimax with Alpha-Beta Pruning)
+  // -----------------------------------------------------------------------------
+  const PIECE_VALUES = { p: 10, n: 30, b: 30, r: 50, q: 90, k: 900 };
+
+  // Positional weights to encourage better play
+  const POS_WEIGHTS = {
+    p: [
+      0,  0,  0,  0,  0,  0,  0,  0,
+      50, 50, 50, 50, 50, 50, 50, 50,
+      10, 10, 20, 30, 30, 20, 10, 10,
+      5,  5, 10, 25, 25, 10,  5,  5,
+      0,  0,  0, 20, 20,  0,  0,  0,
+      5, -5,-10,  0,  0,-10, -5,  5,
+      5, 10, 10,-20,-20, 10, 10,  5,
+      0,  0,  0,  0,  0,  0,  0,  0
+    ],
+    n: [
+      -50,-40,-30,-30,-30,-30,-40,-50,
+      -40,-20,  0,  0,  0,  0,-20,-40,
+      -30,  0, 10, 15, 15, 10,  0,-30,
+      -30,  5, 15, 20, 20, 15,  5,-30,
+      -30,  0, 15, 20, 20, 15,  0,-30,
+      -30,  5, 10, 15, 15, 10,  5,-30,
+      -40,-20,  0,  5,  5,  0,-20,-40,
+      -50,-40,-30,-30,-30,-30,-40,-50
+    ]
+  };
+
+  const evaluateBoard = (game) => {
+    let totalEvaluation = 0;
+    const board = game.board();
+    for (let i = 0; i < 8; i++) {
+      for (let j = 0; j < 8; j++) {
+        const piece = board[i][j];
+        if (piece) {
+          let value = PIECE_VALUES[piece.type];
+          const idx = i * 8 + j;
+          if (piece.type === 'p' && piece.color === 'w') value += (POS_WEIGHTS.p[idx] || 0) / 10;
+          if (piece.type === 'n' && piece.color === 'w') value += (POS_WEIGHTS.n[idx] || 0) / 10;
+          totalEvaluation += (piece.color === 'w' ? value : -value);
+        }
+      }
+    }
+    return totalEvaluation;
+  };
+
+  const minimax = (game, depth, alpha, beta, isMaximizingPlayer) => {
+    if (depth === 0 || game.game_over()) {
+      return evaluateBoard(game);
+    }
+
+    const moves = game.moves();
+
+    if (isMaximizingPlayer) {
+      let maxEval = -Infinity;
+      for (let i = 0; i < moves.length; i++) {
+        game.move(moves[i]);
+        const evalVal = minimax(game, depth - 1, alpha, beta, false);
+        game.undo();
+        maxEval = Math.max(maxEval, evalVal);
+        alpha = Math.max(alpha, evalVal);
+        if (beta <= alpha) break;
+      }
+      return maxEval;
+    } else {
+      let minEval = Infinity;
+      for (let i = 0; i < moves.length; i++) {
+        game.move(moves[i]);
+        const evalVal = minimax(game, depth - 1, alpha, beta, true);
+        game.undo();
+        minEval = Math.min(minEval, evalVal);
+        beta = Math.min(beta, evalVal);
+        if (beta <= alpha) break;
+      }
+      return minEval;
+    }
+  };
+
+  const getBestMove = (game, depth = 2) => {
+    const moves = game.moves();
+    if (moves.length === 0) return null;
+
+    let bestMove = null;
+    let bestValue = Infinity; 
+    
+    // Randomize slightly to avoid repetitive games
+    moves.sort(() => Math.random() - 0.5);
+
+    // If Level 1, play randomly mostly
+    if (depth === 1 && Math.random() > 0.3) {
+       return moves[Math.floor(Math.random() * moves.length)];
+    }
+
+    // Determine target player (White=Max, Black=Min)
+    const isWhiteTurn = game.turn() === 'w';
+    let bestEval = isWhiteTurn ? -Infinity : Infinity;
+
+    for (let i = 0; i < moves.length; i++) {
+      game.move(moves[i]);
+      const boardValue = minimax(game, depth - 1, -Infinity, Infinity, !isWhiteTurn); 
+      game.undo();
+
+      if (isWhiteTurn) {
+        if (boardValue > bestEval) {
+          bestEval = boardValue;
+          bestMove = moves[i];
+        }
+      } else {
+        if (boardValue < bestEval) {
+          bestEval = boardValue;
+          bestMove = moves[i];
+        }
+      }
+    }
+    return bestMove || moves[Math.floor(Math.random() * moves.length)];
+  };
+
+
+  // -----------------------------------------------------------------------------
+  // Main Component
+  // -----------------------------------------------------------------------------
+  function ChessApp() {
+    const [chess, setChess] = useState(null); 
+    const [board, setBoard] = useState([]);
+    const [selectedSquare, setSelectedSquare] = useState(null);
+    const [possibleMoves, setPossibleMoves] = useState([]);
+    const [isCpuThinking, setIsCpuThinking] = useState(false);
+    const [fen, setFen] = useState("");
+    const [history, setHistory] = useState([]);
+    const [hoveredPieceInfo, setHoveredPieceInfo] = useState(null);
+    const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+
+    const [lang, setLang] = useState('ja');
+    const [gameResult, setGameResult] = useState({ type: 'normal', winner: null, turn: 'w', inCheck: false });
+    const [modalConfig, setModalConfig] = useState({ isOpen: false, message: '', onConfirm: null, isAlert: false });
+    const [showInstructions, setShowInstructions] = useState(false);
+    
+    // AI Input State
+    const [aiInput, setAiInput] = useState("");
+
+    // Player Configuration
+    const [whitePlayer, setWhitePlayer] = useState(PLAYER_TYPES.HUMAN);
+    const [blackPlayer, setBlackPlayer] = useState(PLAYER_TYPES.CPU);
+    
+    // CPU Level (1, 2, 3)
+    const [cpuLevel, setCpuLevel] = useState(2);
+
+    const t = TRANSLATIONS[lang];
+
+    // Initialize game
+    useEffect(() => {
+      const game = new window.Chess();
+      setChess(game);
+      setBoard(game.board());
+      setFen(game.fen());
+      setGameResult({ type: 'normal', winner: null, turn: 'w', inCheck: false });
+    }, []);
+
+    // Update visual board state
+    const updateGame = useCallback((game) => {
+      setBoard(game.board());
+      setFen(game.fen());
+      setAiInput(""); // Clear AI input after move
+      
+      const currentTurn = game.turn();
+      let type = 'normal';
+      let winner = null;
+      let inCheck = game.in_check();
+
+      if (game.in_checkmate()) {
+        type = 'checkmate';
+        winner = currentTurn === 'w' ? 'b' : 'w'; 
+      } else if (game.in_draw()) {
+        type = 'draw';
+      } else if (inCheck) {
+        type = 'check';
+      }
+
+      setGameResult({ type, winner, turn: currentTurn, inCheck });
+    }, []);
+
+    // Helper to check if current player is an "External AI" (needs relay)
+    const isCurrentPlayerExternal = () => {
+      if (!chess) return false;
+      const turn = chess.turn(); // 'w' or 'b'
+      const type = turn === 'w' ? whitePlayer : blackPlayer;
+      return type === PLAYER_TYPES.EXTERNAL_AI;
+    };
+
+    // Helper to check if current player is "Local CPU"
+    const isCurrentPlayerLocalCpu = () => {
+      if (!chess) return false;
+      const turn = chess.turn();
+      const type = turn === 'w' ? whitePlayer : blackPlayer;
+      return type === PLAYER_TYPES.CPU;
+    };
+    
+    // Check if ANY CPU player is active (to show level control)
+    const isAnyCpuActive = whitePlayer === PLAYER_TYPES.CPU || blackPlayer === PLAYER_TYPES.CPU;
+
+    // Helper to get current player type name
+    const getCurrentPlayerTypeName = () => {
+      if (!chess) return "";
+      const turn = chess.turn();
+      const type = turn === 'w' ? whitePlayer : blackPlayer;
+      return t.playerTypes[type];
+    };
+
+    // Derived Status Message
+    const getStatusMessage = () => {
+      if (!chess) return t.statusLoading;
+      if (isCpuThinking) return t.statusThinking;
+      
+      const { type, winner, turn, inCheck } = gameResult;
+      
+      if (type === 'checkmate') return t.statusCheckmate(winner);
+      if (type === 'draw') return t.statusDraw;
+      if (type === 'check') return t.statusCheck(turn === 'w');
+      
+      // Custom status for AI Battle / Relay
+      const playerType = turn === 'w' ? whitePlayer : blackPlayer;
+      return t.statusTurn(turn, t.playerTypes[playerType]);
+    };
+
+    const toggleLang = () => {
+      setLang(prev => prev === 'ja' ? 'en' : 'ja');
+    };
+    
+    // Core Reset Logic
+    const resetGameLogic = (newWhite, newBlack) => {
+      if(chess) {
+        chess.reset();
+        updateGame(chess);
+        setHistory([]);
+        setSelectedSquare(null);
+        setPossibleMoves([]);
+        setHoveredPieceInfo(null);
+        setIsCpuThinking(false);
+        if (newWhite) setWhitePlayer(newWhite);
+        if (newBlack) setBlackPlayer(newBlack);
+      }
+    };
+
+    // Modal Helpers
+    const openConfirmModal = (message, onConfirm) => {
+        setModalConfig({ isOpen: true, message, onConfirm, isAlert: false });
+    };
+    const openAlertModal = (message) => {
+        setModalConfig({ isOpen: true, message, onConfirm: null, isAlert: true });
+    };
+    const closeModal = () => {
+        setModalConfig({ ...modalConfig, isOpen: false });
+    };
+    const handleModalConfirm = () => {
+        if (modalConfig.onConfirm) modalConfig.onConfirm();
+        closeModal();
+    };
+
+    const handleResetClick = () => {
+      if (history.length > 0) {
+          openConfirmModal(t.resetConfirm, () => resetGameLogic());
+          return;
+      }
+      resetGameLogic();
+    };
+
+    // Execute CPU Move (Local)
+    const makeCpuMove = useCallback(() => {
+      if (!chess || chess.game_over()) return;
+
+      setIsCpuThinking(true);
+      setTimeout(() => {
+        const bestMove = getBestMove(chess, cpuLevel);
+        if (bestMove) {
+            const result = chess.move(bestMove);
+            if (result) {
+              setHistory(h => [...h, result.san]);
+              updateGame(chess);
+            }
+        }
+        setIsCpuThinking(false);
+      }, 500); 
+    }, [chess, updateGame, cpuLevel]);
+
+    // Apply AI Move from Text Input
+    const handleAiMoveApply = () => {
+        if (!chess || !aiInput) return;
+        
+        let validMove = null;
+
+        // 1. Try to find "from to" pattern in the input (e.g. "g1 to f3")
+        // Regex looks for [file][rank] followed by "to" or similar separator, then [file][rank]
+        const fromToRegex = /([a-h][1-8])\s*(?:to|->|-)\s*([a-h][1-8])/i;
+        const match = aiInput.match(fromToRegex);
+
+        if (match) {
+            const fromSquare = match[1].toLowerCase();
+            const toSquare = match[2].toLowerCase();
+            // Try to move using object notation
+            // Note: promotion defaults to queen if not specified
+            const moveObj = { from: fromSquare, to: toSquare, promotion: 'q' };
+            try {
+                // Check validity first or just try moving
+                const legalMoves = chess.moves({ verbose: true });
+                const foundLegal = legalMoves.find(m => m.from === fromSquare && m.to === toSquare);
+                
+                if (foundLegal) {
+                     const result = chess.move(foundLegal.san); // Use SAN for move to ensure history consistency
+                     if (result) {
+                        setHistory(h => [...h, result.san]);
+                        updateGame(chess);
+                        return;
+                     }
+                }
+            } catch (e) {
+                // Fallback to SAN parsing below
+            }
+        }
+
+        // 2. If no "from to" pattern or move failed, fall back to SAN search
+        const moves = chess.moves();
+        const sortedMoves = [...moves].sort((a, b) => b.length - a.length);
+
+        for (const move of sortedMoves) {
+            if (aiInput.includes(move)) {
+                validMove = move;
+                break;
+            }
+        }
+
+        if (validMove) {
+            try {
+                const result = chess.move(validMove);
+                if (result) {
+                    setHistory(h => [...h, result.san]);
+                    updateGame(chess);
+                    return;
+                }
+            } catch (e) {
+                // Should not happen if validMove is from chess.moves()
+            }
+        }
+        
+        openAlertModal(t.aiMoveError);
+    };
+
+    // Game Loop for Local CPU turns
+    useEffect(() => {
+      if (!chess || chess.game_over()) return;
+      if (isCurrentPlayerLocalCpu() && !isCpuThinking) {
+        makeCpuMove();
+      }
+    }, [chess, whitePlayer, blackPlayer, isCpuThinking, makeCpuMove, fen]);
+
+
+    // Handle Square Click
+    const handleSquareClick = (squareKey) => {
+      if (!chess || isCpuThinking || chess.game_over()) return;
+
+      // Allow move if Human OR External AI (User acts as relay)
+      const isHuman = (chess.turn() === 'w' && whitePlayer === PLAYER_TYPES.HUMAN) || (chess.turn() === 'b' && blackPlayer === PLAYER_TYPES.HUMAN);
+      const isRelay = isCurrentPlayerExternal();
+
+      if (!isHuman && !isRelay) return;
+
+      if (selectedSquare === squareKey) {
+        setSelectedSquare(null);
+        setPossibleMoves([]);
+        return;
+      }
+
+      if (selectedSquare) {
+        const move = {
+          from: selectedSquare,
+          to: squareKey,
+          promotion: 'q' 
+        };
+
+      try {
+        const result = chess.move(move);
+        if (result) {
+          const newHistory = [...history, result.san];
+          setHistory(newHistory);
+          setSelectedSquare(null);
+          setPossibleMoves([]);
+          updateGame(chess);
+          return;
+        }
+      } catch (e) {}
+    }
+
+      const piece = chess.get(squareKey);
+      if (piece && piece.color === chess.turn()) {
+        setSelectedSquare(squareKey);
+        const moves = chess.moves({ square: squareKey, verbose: true });
+        setPossibleMoves(moves.map(m => m.to));
+      } else {
+        setSelectedSquare(null);
+        setPossibleMoves([]);
+      }
+    };
+
+    const handleMouseEnter = (piece, e) => {
+      if (piece) {
+        const description = t.pieces[piece.type];
+        setHoveredPieceInfo({ ...description, color: piece.color });
+        setTooltipPosition({ x: e.clientX + 15, y: e.clientY + 15 });
+      }
+    };
+
+    const handleMouseLeave = () => {
+      setHoveredPieceInfo(null);
+    };
+
+    const handleMouseMove = (e) => {
+        if (hoveredPieceInfo) {
+            setTooltipPosition({ x: e.clientX + 15, y: e.clientY + 15 });
+        }
+    };
+
+    const copyToClipboard = () => {
+      if (!chess) return;
+      const turn = chess.turn();
+      const prompt = t.promptTemplate(fen, turn);
+      
+      const textArea = document.createElement("textarea");
+      textArea.value = prompt;
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        openAlertModal(t.aiAlert);
+      } catch (err) {
+        console.error('Copy failed', err);
+      }
+      document.body.removeChild(textArea);
+    };
+
+    const getSquareColor = (row, col) => {
+      const isDark = (row + col) % 2 === 1;
+      return isDark ? 'bg-slate-500' : 'bg-slate-200';
+    };
+
+    const renderBoard = () => {
+      if (!board || !board.length) return <div className="p-10 text-center">{t.statusLoading}</div>;
+
+      const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+      const rows = [];
+
+      for (let r = 0; r < 8; r++) {
+        const cols = [];
+        for (let c = 0; c < 8; c++) {
+          const squareKey = `${files[c]}${8 - r}`;
+          const rowData = board[r];
+          const piece = rowData ? rowData[c] : null; 
+          const isSelected = selectedSquare === squareKey;
+          const isPossibleMove = possibleMoves.includes(squareKey);
+          
+          const PieceIcon = piece && PIECE_SVGS[piece.color] ? PIECE_SVGS[piece.color][piece.type] : null;
+
+          cols.push(
+            <div
+              key={squareKey}
+              onClick={() => handleSquareClick(squareKey)}
+              onMouseEnter={(e) => handleMouseEnter(piece, e)}
+              onMouseLeave={handleMouseLeave}
+              onMouseMove={handleMouseMove}
+              className={`
+                w-full h-full aspect-square flex items-center justify-center relative cursor-pointer
+                ${getSquareColor(r, c)}
+                ${isSelected ? 'ring-4 ring-sky-400 z-10' : ''}
+              `}
+            >
+              {c === 0 && <span className={`absolute top-0.5 left-0.5 text-[10px] font-bold ${getSquareColor(r,c).includes('500') ? 'text-slate-200' : 'text-slate-500'}`}>{8-r}</span>}
+              {r === 7 && <span className={`absolute bottom-0 right-1 text-[10px] font-bold ${getSquareColor(r,c).includes('500') ? 'text-slate-200' : 'text-slate-500'}`}>{files[c]}</span>}
+
+              {isPossibleMove && (
+                <div className={`absolute w-3 h-3 rounded-full z-20 ${piece ? 'bg-rose-500 ring-2 ring-white' : 'bg-emerald-400/60'}`}></div>
+              )}
+
+              {PieceIcon && (
+                <div className="w-4/5 h-4/5 select-none pointer-events-none transition-transform active:scale-110">
+                  {PieceIcon}
+                </div>
+              )}
+            </div>
+          );
+        }
+        rows.push(<div key={r} className="flex w-full">{cols}</div>);
+      }
+      return rows;
+    };
+
+    return (
+      <div className="min-h-screen bg-gray-50 font-sans text-gray-800 flex flex-col items-center py-6 px-2 relative">
+        
+        {/* Modal */}
+        {modalConfig.isOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full transform transition-all scale-100">
+              <h3 className="text-lg font-bold text-gray-800 mb-2">{t.title}</h3>
+              <p className="text-gray-600 mb-6 whitespace-pre-wrap">{modalConfig.message}</p>
+              <div className="flex justify-end gap-3">
+                {!modalConfig.isAlert && (
+                    <button 
+                    onClick={closeModal}
+                    className="px-4 py-2 text-gray-600 font-semibold hover:bg-gray-100 rounded-lg transition"
+                    >
+                    {t.cancel}
+                    </button>
+                )}
+                <button 
+                  onClick={handleModalConfirm}
+                  className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition"
+                >
+                  {t.ok}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tooltip */}
+        {hoveredPieceInfo && (
+          <div 
+            className="fixed z-50 bg-gray-800 text-white p-3 rounded-lg shadow-lg pointer-events-none text-sm max-w-xs"
+            style={{ top: tooltipPosition.y, left: tooltipPosition.x }}
+          >
+            <div className="font-bold mb-1 flex items-center gap-2">
+              <span className="w-6 h-6 inline-block">{PIECE_SVGS[hoveredPieceInfo.color][Object.keys(t.pieces).find(key => t.pieces[key].name === hoveredPieceInfo.name)]}</span>
+              {hoveredPieceInfo.name}
+            </div>
+            <p>{hoveredPieceInfo.move}</p>
+          </div>
+        )}
+
+        {/* Header */}
+        <div className="w-full max-w-md flex flex-col gap-3 mb-4">
+          <div className="flex flex-col gap-2">
+            <div className="flex justify-between items-center">
+                <h1 className="text-2xl font-bold flex items-center gap-2 text-gray-800">
+                <Trophy className="text-indigo-600" size={28} /> {t.title}
+                </h1>
+                <div className="flex gap-2">
+                <button 
+                    onClick={() => setShowInstructions(!showInstructions)} 
+                    className={`px-3 py-1 rounded-full shadow transition text-sm font-bold flex items-center gap-1 ${showInstructions ? 'bg-indigo-100 text-indigo-700' : 'bg-white hover:bg-gray-50 text-gray-600'}`}
+                >
+                    <Info size={16} />
+                    {t.instructionsTitle}
+                    {showInstructions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+                <button onClick={toggleLang} className="px-3 py-1 bg-white rounded-full shadow hover:bg-gray-50 transition text-sm font-bold text-indigo-600 flex items-center gap-1">
+                    <Languages size={16} />
+                    {lang === 'ja' ? 'EN' : 'JP'}
+                </button>
+                <button onClick={handleResetClick} className="px-3 py-1 bg-white rounded-full shadow hover:bg-gray-50 transition text-sm font-bold text-gray-600 flex items-center gap-1">
+                    <RotateCcw size={16} />
+                </button>
+                </div>
+            </div>
+
+            {/* Instructions Accordion */}
+            {showInstructions && (
+                <div className="bg-white p-4 rounded-xl shadow-lg border border-gray-200 text-sm animate-in fade-in slide-in-from-top-2">
+                    <h3 className="font-bold text-gray-700 mb-2">{t.instructionsTitle}</h3>
+                    <ul className="text-gray-600 space-y-1 list-disc pl-5">
+                    {lang === 'ja' ? (
+                        <>
+                        <li>「プレイヤー設定」で白と黒を自由に選択できます 人間 CPU 外部AIなど</li>
+                        <li><strong>AI観戦モード</strong>: 両方にAIを選択すると リレー形式で対戦させることができます</li>
+                        <li>コマにマウスを乗せると 名称と動き方の説明が表示されます</li>
+                        </>
+                    ) : (
+                        <>
+                        <li>Select player types for White and Black in the config above.</li>
+                        <li><strong>AI Battle</strong>: Select AI for both sides to relay moves between them.</li>
+                        <li>Hover over pieces to see their names and moves.</li>
+                        </>
+                    )}
+                    </ul>
+                </div>
+            )}
+          </div>
+          
+          {/* Player Config */}
+          <div className="grid grid-cols-2 gap-2 text-sm">
+             <div className="bg-white p-2 rounded-lg shadow-sm border border-gray-200">
+               <label className="block text-xs font-bold text-gray-500 mb-1">{t.white}</label>
+               <select 
+                 value={whitePlayer} 
+                 onChange={(e) => {
+                   if(history.length > 0) openConfirmModal(t.resetConfirm, () => resetGameLogic(e.target.value, null));
+                   else setWhitePlayer(e.target.value);
+                 }}
+                 className="w-full p-1 bg-gray-50 rounded border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+               >
+                 {Object.entries(t.playerTypes).map(([key, label]) => (
+                   <option key={key} value={key}>{label}</option>
+                 ))}
+               </select>
+             </div>
+             <div className="bg-white p-2 rounded-lg shadow-sm border border-gray-200">
+               <label className="block text-xs font-bold text-gray-500 mb-1">{t.black}</label>
+               <select 
+                 value={blackPlayer} 
+                 onChange={(e) => {
+                   if(history.length > 0) openConfirmModal(t.resetConfirm, () => resetGameLogic(null, e.target.value));
+                   else setBlackPlayer(e.target.value);
+                 }}
+                 className="w-full p-1 bg-gray-50 rounded border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+               >
+                 {Object.entries(t.playerTypes).map(([key, label]) => (
+                   <option key={key} value={key}>{label}</option>
+                 ))}
+               </select>
+             </div>
+          </div>
+
+          {/* CPU Level Config (Visible only if CPU is selected) */}
+          {isAnyCpuActive && (
+            <div className="flex items-center gap-2 bg-white p-2 rounded-lg shadow-sm border border-gray-200">
+               <Gauge size={18} className="text-gray-500 ml-1" />
+               <label className="text-sm font-bold text-gray-600 whitespace-nowrap">{t.cpuLevelLabel}</label>
+               <div className="flex-1 flex gap-1">
+                 {[1, 2, 3].map(lv => (
+                   <button
+                     key={lv}
+                     onClick={() => setCpuLevel(lv)}
+                     className={`flex-1 py-1 text-xs font-bold rounded transition ${cpuLevel === lv ? 'bg-indigo-600 text-white shadow' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                   >
+                     Lv.{lv}
+                   </button>
+                 ))}
+               </div>
+            </div>
+          )}
+        </div>
+
+        {/* Status Bar */}
+        <div className={`w-full max-w-md px-4 py-3 rounded-xl mb-4 shadow-sm flex items-center justify-between
+          ${getStatusMessage().includes("check") || getStatusMessage().includes("チェック") ? 'bg-rose-50 text-rose-700 border-rose-200 border' : 'bg-white border-gray-200 border'}
+        `}>
+          <div className="flex items-center gap-3 font-semibold">
+            {isCpuThinking ? (
+              <>
+                <RefreshCw className="animate-spin text-gray-500" size={20} />
+                <span>{t.statusThinking}</span>
+              </>
+            ) : (
+              <span>{getStatusMessage()}</span>
+            )}
+          </div>
+          <div className="text-sm px-2 py-1 bg-gray-100 rounded text-gray-500">
+            {t.level(cpuLevel)}
+          </div>
+        </div>
+
+        {/* Chess Board Container */}
+        <div className="w-full max-w-md aspect-square bg-gray-900 p-2 rounded-2xl shadow-2xl overflow-hidden mb-6 select-none">
+          <div className="w-full h-full flex flex-col border border-gray-700 rounded-lg overflow-hidden">
+            {renderBoard()}
+          </div>
+        </div>
+
+        {/* Control Panel / Guides */}
+        <div className="w-full max-w-md grid grid-cols-1 gap-4">
+          
+          {/* AI Relay Panel (Visible only when it's External AI's turn) */}
+          {isCurrentPlayerExternal() && !chess?.game_over() && (
+            <div className="bg-indigo-50 p-5 rounded-2xl shadow-sm border border-indigo-200">
+                <div className="flex items-center gap-2 mb-2 text-indigo-700 font-bold">
+                <Sparkles size={20} />
+                <h3>{t.aiTitle}</h3>
+                </div>
+                <p className="text-xs text-indigo-600 mb-4 whitespace-pre-wrap">
+                {t.aiDesc}
+                </p>
+                
+                {/* Step 1: Copy Prompt */}
+                <button 
+                onClick={copyToClipboard}
+                className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-3 rounded-xl font-semibold hover:bg-indigo-700 active:scale-95 transition shadow-md mb-4"
+                >
+                <Copy size={18} />
+                {t.aiBtn}
+                </button>
+
+                {/* Step 2: Paste & Apply */}
+                <div className="flex flex-col gap-2">
+                    <textarea 
+                        className="w-full p-2 border border-indigo-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none"
+                        rows="2"
+                        placeholder={t.aiInputPlaceholder}
+                        value={aiInput}
+                        onChange={(e) => setAiInput(e.target.value)}
+                    ></textarea>
+                    <button 
+                    onClick={handleAiMoveApply}
+                    className="w-full flex items-center justify-center gap-2 bg-white text-indigo-700 border border-indigo-200 py-2 rounded-xl font-semibold hover:bg-indigo-50 active:scale-95 transition"
+                    >
+                    <ArrowDownToLine size={18} />
+                    {t.aiApplyBtn}
+                    </button>
+                </div>
+            </div>
+          )}
+
+          {/* Regular AI Helper (Visible for humans) */}
+          {!isCurrentPlayerExternal() && !isCurrentPlayerLocalCpu() && (
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
+                <div className="flex items-center gap-2 mb-2 text-gray-600 font-bold">
+                <Brain size={20} />
+                <h3>{t.aiTitle}</h3>
+                </div>
+                <p className="text-xs text-gray-500 mb-4 whitespace-pre-wrap">
+                {t.aiDesc}
+                </p>
+                <button 
+                onClick={copyToClipboard}
+                className="w-full flex items-center justify-center gap-2 bg-gray-100 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-200 active:scale-95 transition mb-4"
+                >
+                <Copy size={18} />
+                {t.aiBtn}
+                </button>
+
+                 {/* Step 2: Paste & Apply */}
+                 <div className="flex flex-col gap-2">
+                    <textarea 
+                        className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-400 focus:outline-none resize-none"
+                        rows="2"
+                        placeholder={t.aiInputPlaceholder}
+                        value={aiInput}
+                        onChange={(e) => setAiInput(e.target.value)}
+                    ></textarea>
+                    <button 
+                    onClick={handleAiMoveApply}
+                    className="w-full flex items-center justify-center gap-2 bg-white text-gray-700 border border-gray-300 py-2 rounded-xl font-semibold hover:bg-gray-50 active:scale-95 transition"
+                    >
+                    <ArrowDownToLine size={18} />
+                    {t.aiApplyBtn}
+                    </button>
+                </div>
+            </div>
+          )}
+        </div>
+
+      </div>
+    );
+  }
+
+  const container = document.getElementById('root');
+  const root = ReactDOM.createRoot(container);
+  root.render(<ChessApp />);
+
+</script>
+</body>
+</html>
